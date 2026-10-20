@@ -15,6 +15,7 @@ from openviking.privacy.reference import build_privacy_field_reference
 from openviking.privacy.session_extractor import (
     build_session_placeholder,
     extract_and_store_session_privacy,
+    session_privacy_target,
 )
 from openviking.privacy.session_restore import restore_session_read
 from openviking.server.config import ToolOutputExternalizationConfig
@@ -304,6 +305,31 @@ async def test_auto_created_session_extracts_before_persistence(service, ctx):
     current = await service.privacy_configs.get_current(ctx, "session", session.session_id)
     assert list(current.values.values()) == ["default-secret"]
     assert "default-secret" in await service.fs.read(uri, ctx=ctx)
+
+@pytest.mark.parametrize(
+    "sid",
+    ["中文会话", "team session@@group", " leading and trailing ", "x" * 300, "group:100%~"],
+)
+async def test_custom_session_ids_support_privacy_and_cross_session_reuse(service, ctx, sid):
+    session = await service.sessions.create(ctx, sid)
+    await session.add_message_async("user", [TextPart("password=custom-session-secret")])
+    target_key = session_privacy_target(sid)
+    current = await service.privacy_configs.get_current(ctx, "session", target_key)
+    [field] = current.values
+    meta = await service.privacy_configs.get_meta(ctx, "session", target_key)
+    assert meta.labels == {"session_id": sid}
+    uri = session.uri + "/messages.jsonl"
+    disk = await service.viking_fs.read_file(uri, ctx=ctx)
+    assert "custom-session-secret" not in disk
+    assert build_session_placeholder(target_key, field) in disk
+    restored = await service.fs.read(uri, ctx=ctx)
+    assert json.loads(restored)["parts"][0]["text"] == "password=custom-session-secret"
+    target = await service.sessions.create(ctx, "reuse-custom-id")
+    await target.add_message_async("user", [TextPart("password=custom-session-secret")])
+    reference = build_privacy_field_reference(ctx.user.user_id, "session", target_key, field)
+    assert target.messages[0].parts[0].text == f"password={reference}"
+    restored = await service.fs.read(target.uri + "/messages.jsonl", ctx=ctx)
+    assert json.loads(restored)["parts"][0]["text"] == "password=custom-session-secret"
 
 
 async def test_concurrent_writers_preserve_messages_and_independent_fields(

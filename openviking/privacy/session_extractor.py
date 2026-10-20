@@ -3,6 +3,8 @@
 """Extract Session credentials before externalization and message persistence."""
 
 import asyncio
+import hashlib
+import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from secrets import token_urlsafe
@@ -17,6 +19,7 @@ from openviking.privacy.rules import (
 )
 from openviking.privacy.sanitizer import PrivacyReplacement, PrivacySanitizer
 from openviking.privacy.service import UserPrivacyConfigService
+from openviking.privacy.validation import validate_privacy_identifier
 from openviking.server.identity import RequestContext
 from openviking_cli.exceptions import (
     AlreadyExistsError,
@@ -30,6 +33,7 @@ MAX_NODES = 100_000
 MAX_FIELD_ID_ATTEMPTS = 8
 _Matcher = Callable[[str], tuple[PrivacyReplacement, ...]]
 _Text = TypeVar("_Text", str, None)
+_HASHED_TARGET = re.compile(r"_[0-9a-f]{24}")
 
 
 async def extract_and_store_session_privacy(
@@ -40,13 +44,15 @@ async def extract_and_store_session_privacy(
     sanitizer: PrivacySanitizer | None,
 ) -> list[dict]:
     """Extract on copies, persist discoveries, then protect remaining registered values."""
+    target_key = session_privacy_target(session_id)
+    labels = None if target_key == session_id else {"session_id": session_id}
     matcher = (
         await sanitizer.prepare_matcher(ctx, prefer_credentials=True) if sanitizer else _no_matches
     )
     for _ in range(MAX_FIELD_ID_ATTEMPTS):
         sanitized, added = await asyncio.to_thread(
             extract_session_privacy_values,
-            session_id,
+            target_key,
             messages_spec,
             match_registered=matcher,
         )
@@ -56,10 +62,11 @@ async def extract_and_store_session_privacy(
             await privacy.insert_values(
                 ctx,
                 "session",
-                session_id,
+                target_key,
                 added,
                 updated_by=ctx.user.user_id,
                 change_reason="Session message extraction",
+                labels=labels,
             )
         except AlreadyExistsError:
             continue
@@ -75,18 +82,30 @@ async def extract_and_store_session_privacy(
 
 
 def extract_session_privacy_values(
-    session_id: str,
+    target_key: str,
     messages_spec: list[dict],
     *,
     match_registered: _Matcher | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Return protected copies and discoveries without modifying caller-owned data."""
-    extraction = _SessionExtraction(session_id, match_registered or _no_matches)
+    extraction = _SessionExtraction(target_key, match_registered or _no_matches)
     return extraction.transform_messages(messages_spec), extraction.values
 
 
-def build_session_placeholder(session_id: str, key: str) -> str:
-    return f"{{{{ov_privacy:session:{session_id}:{key}}}}}"
+def session_privacy_target(session_id: str) -> str:
+    if not _HASHED_TARGET.fullmatch(session_id):
+        # Use valid Privacy identifiers as-is
+        try:
+            return validate_privacy_identifier(session_id, "target_key")
+        except InvalidArgumentError:
+            pass
+    # hash other IDs and digest-shaped IDs.
+    digest = hashlib.sha256(session_id.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"_{digest[:24]}"
+
+
+def build_session_placeholder(target_key: str, key: str) -> str:
+    return f"{{{{ov_privacy:session:{target_key}:{key}}}}}"
 
 
 @dataclass
@@ -187,9 +206,9 @@ class _SessionExtraction(_PayloadTransformer):
 
     budget: _ExtractionBudget
 
-    def __init__(self, session_id: str, value_matcher: _Matcher):
+    def __init__(self, target_key: str, value_matcher: _Matcher):
         super().__init__(_ExtractionBudget())
-        self.session_id = session_id
+        self.target_key = target_key
         self.value_matcher = value_matcher
         self.values: dict[str, Any] = {}
         self.text_references: dict[str, str] = {}
@@ -222,7 +241,7 @@ class _SessionExtraction(_PayloadTransformer):
             key = token_urlsafe(6)
             if key not in self.values:
                 self.values[key] = value
-                return build_session_placeholder(self.session_id, key)
+                return build_session_placeholder(self.target_key, key)
         raise ResourceExhaustedError("Could not allocate unique Session privacy field IDs")
 
     def transform_text(self, text: _Text) -> _Text:

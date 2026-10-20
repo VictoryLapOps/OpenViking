@@ -81,6 +81,7 @@
 | 项目 | 限制 |
 |------|------|
 | `category` / `target_key` | 非空、最多 255 个 ASCII 字符；仅允许字母、数字、`_`、`-`、`.`、`@`；禁止 `.`、`..`，`@` 最多一个 |
+| Session 的 `target_key` | 当 Session ID 符合上行的限制时，使用 Session ID 作为 `target_key`；否则为 `_` 加 SHA-256 前 24 位十六进制（原始 Session ID 会自动记录在 `labels.session_id`） |
 | values 顶层字段 | `category=session` 最多 1024 个；其他类别最多 128 个 |
 | 字段名 | 非空、最多 255 UTF-8 字节、禁止控制字符 |
 | 单个字符串值 | 最多 64 KiB UTF-8 |

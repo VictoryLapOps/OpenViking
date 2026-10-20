@@ -310,7 +310,7 @@ class UserPrivacyConfigService:
         change_reason: str = "",
         labels: Optional[dict[str, Any]] = None,
     ) -> UserPrivacyConfigVersion:
-        """Atomically add new fields; reject the batch if any field already exists."""
+        """Atomically add new fields; labels apply only when creating the target."""
         async with self._config_lock(ctx, category, target_key) as lease:
             current = await self.get_current(ctx, category, target_key)
             values = dict(current.values) if current is not None else {}
@@ -324,7 +324,7 @@ class UserPrivacyConfigService:
                 values=values,
                 updated_by=updated_by,
                 change_reason=change_reason,
-                labels=labels,
+                labels=labels if current is None else None,
                 lease_ref=lease,
                 current=current,
             )

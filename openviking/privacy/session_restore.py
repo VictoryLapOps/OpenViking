@@ -8,6 +8,7 @@ from typing import Any
 
 from openviking.privacy.reference import parse_privacy_field_reference
 from openviking.privacy.service import UserPrivacyConfigService
+from openviking.privacy.session_extractor import session_privacy_target
 from openviking.server.identity import RequestContext
 from openviking_cli.exceptions import InvalidArgumentError, NotFoundError, ResourceExhaustedError
 
@@ -94,15 +95,16 @@ async def restore_session_read(
     jsonl: bool = False,
 ) -> str:
     """Resolve user-owned references from current values without rewriting disk."""
+    target_key = session_privacy_target(session_id)
     selectors = {}
     targets = {}
     for match in _REFERENCE.finditer(content):
         selector = match[0]
         short = _SESSION_REFERENCE.fullmatch(selector)
         if short is not None:
-            if short[1] != session_id:
+            if short[1] != target_key:
                 continue
-            target, field = ("session", session_id), short[2]
+            target, field = ("session", target_key), short[2]
         else:
             reference = parse_privacy_field_reference(selector)
             if reference is None or reference.owner_user_id != ctx.user.user_id:

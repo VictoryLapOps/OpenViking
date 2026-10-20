@@ -101,6 +101,7 @@ The server applies the same validation to HTTP, CLI, Embedded, and internal writ
 | Item | Limit |
 |------|------|
 | `category` / `target_key` | Non-empty, at most 255 ASCII characters; only letters, digits, `_`, `-`, `.`, and `@`; `.` and `..` are forbidden and at most one `@` is allowed |
+| Session `target_key` | Use the Session ID when it meets the limits above; otherwise use `_` followed by the first 24 hexadecimal characters of its SHA-256 hash (the original Session ID is automatically recorded in `labels.session_id`) |
 | Top-level values fields | At most 1024 for `category=session`; at most 128 for other categories |
 | Field name | Non-empty, at most 255 UTF-8 bytes, no control characters |
 | Individual string | At most 64 KiB UTF-8 |
