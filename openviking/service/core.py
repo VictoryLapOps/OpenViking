@@ -41,6 +41,7 @@ from openviking.storage.queuefs.reindex_processor import ReindexProcessor
 from openviking.storage.queuefs.session_commit_processor import SessionCommitProcessor
 from openviking.storage.viking_fs import VikingFS, init_viking_fs
 from openviking.storage.vikingdb_manager import VikingDBManager
+from openviking.system_assets.reconcile import AccountLister, SystemAssetReconciler
 from openviking.system_assets.sync import SystemAssetSynchronizer
 from openviking.utils.agfs_utils import (
     build_runtime_ragfs_binding_config,
@@ -103,6 +104,7 @@ class OpenVikingService:
         self._skill_processor: Optional[SkillProcessor] = None
         self._session_compressor: Optional["SessionCompressorV3"] = None
         self._directory_initializer: Optional[DirectoryInitializer] = None
+        self._system_asset_synchronizer: Optional[SystemAssetSynchronizer] = None
         self._uri_mutation_coordinator = UriMutationCoordinator()
         self._watch_scheduler: Optional[WatchScheduler] = None
         self._session_auto_commit_scheduler: Optional[SessionAutoCommitScheduler] = None
@@ -513,12 +515,14 @@ class OpenVikingService:
         )
 
         # Initialize directories
+        system_asset_synchronizer = SystemAssetSynchronizer(
+            viking_fs=self._viking_fs,
+        )
+        self._system_asset_synchronizer = system_asset_synchronizer
         directory_initializer = DirectoryInitializer(
             vikingdb=self._vikingdb_manager,
             viking_fs=self._viking_fs,
-            system_asset_synchronizer=SystemAssetSynchronizer(
-                viking_fs=self._viking_fs,
-            ),
+            system_asset_synchronizer=system_asset_synchronizer,
         )
         self._directory_initializer = directory_initializer
         default_ctx = RequestContext(user=self._user, role=Role.ROOT)
@@ -923,6 +927,17 @@ class OpenVikingService:
         if not self._directory_initializer:
             return 0, 0
         return await self._directory_initializer.initialize_account_workspace(ctx)
+
+    async def reconcile_system_assets(self, account_lister: AccountLister) -> int:
+        """Synchronize packaged system assets for every active account."""
+        self._ensure_initialized()
+        if not self._system_asset_synchronizer:
+            return 0
+        return await SystemAssetReconciler(
+            self._system_asset_synchronizer,
+            account_lister,
+            user_id=self._config.default_user or self._user.user_id,
+        ).sync_all()
 
     async def initialize_user_directories(self, ctx: RequestContext) -> int:
         """Initialize current user's directory tree."""

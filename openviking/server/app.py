@@ -170,6 +170,9 @@ async def _initialize_runtime_state(
     await service.initialize()
     await service.apply_agent_evolution_config()
     await _initialize_auth_plugin(app, service, config)
+    if app.state.api_key_manager is not None:
+        account_count = await service.reconcile_system_assets(app.state.api_key_manager)
+        logger.info("Reconciled system assets for %d active accounts", account_count)
     from openviking.service.deletion import setup_deletion
 
     app.state.deletion_service = await setup_deletion(
