@@ -42,6 +42,19 @@ _MAX_CONFIG_BYTES = 1024 * 1024
 _TEMPLATE_LOCK_TIMEOUT_SECONDS = 10.0
 _TEMPLATE_LOCK_RETRY_SECONDS = 0.05
 
+
+class _ReadableTemplateDumper(yaml.SafeDumper):
+    pass
+
+
+def _represent_template_string(dumper: yaml.SafeDumper, value: str) -> yaml.nodes.ScalarNode:
+    style = "|" if "\n" in value else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_ReadableTemplateDumper.add_representer(str, _represent_template_string)
+
+
 # Field names select existing fields; only their descriptions are editable.
 EDITABLE_MEMORY_TEMPLATE_FIELDS = {
     "profile": ("content",),
@@ -356,15 +369,21 @@ async def update_account_memory_template(
             complete = None
         else:
             complete["_updated_at"] = datetime.now(timezone.utc).isoformat()
-            encoded = yaml.safe_dump(complete, allow_unicode=True, sort_keys=False).encode("utf-8")
+            encoded = yaml.dump(
+                complete,
+                Dumper=_ReadableTemplateDumper,
+                allow_unicode=True,
+                sort_keys=False,
+            ).encode("utf-8")
             if len(encoded) > _MAX_CONFIG_BYTES:
                 raise InvalidArgumentError("A memory template must not exceed 1 MiB")
 
     path = account_memory_template_path(account_id, memory_type)
     legacy_path = legacy_account_memory_template_path(account_id, memory_type)
+    backup_path = f"{path}.backup"
     staging_path = f"{path}.{uuid.uuid4().hex}.tmp" if complete is not None else None
     client = AsyncAGFSClient(viking_fs.agfs)
-    lock_paths = [path, legacy_path]
+    lock_paths = [path, legacy_path, backup_path]
     if staging_path is not None:
         lock_paths.append(staging_path)
     lease = await _acquire_template_lock(
@@ -375,6 +394,7 @@ async def update_account_memory_template(
             client,
             path,
             legacy_path,
+            backup_path,
             staging_path,
             memory_type,
             complete,
@@ -424,6 +444,7 @@ async def _update_locked_template(
     client: AsyncAGFSClient,
     path: str,
     legacy_path: str,
+    backup_path: str,
     staging_path: str | None,
     memory_type: str,
     complete: dict | None,
@@ -446,9 +467,10 @@ async def _update_locked_template(
                 current = _parse_template(active_raw, memory_type)
             except FailedPreconditionError:
                 # Explicit PUT/DELETE is the recovery path for damaged persisted
-                # content. Preserve the original bytes below before replacing it.
+                # content, so allow the operation to replace or remove it.
                 pass
         if complete is None and active_raw is None:
+            await _remove_obsolete_backup(client, backup_path, fs_ctx)
             return None
         if complete is not None and raw is not None and current is not None:
             if {k: v for k, v in current.items() if k != "_updated_at"} == {
@@ -469,13 +491,12 @@ async def _update_locked_template(
                                 "retryable": True,
                             },
                         ) from exc
+                await _remove_obsolete_backup(client, backup_path, fs_ctx)
                 return current
         try:
             await client.ensure_parent_dirs(path)
         except AGFSAlreadyExistsError:
             pass
-        if active_raw is not None:
-            await client.write(path + ".backup", active_raw)
         if complete is None:
             try:
                 await client.rm(legacy_path, fs_ctx=fs_ctx)
@@ -504,18 +525,27 @@ async def _update_locked_template(
                 pass
             except Exception as exc:
                 raise FailedPreconditionError(
-                    "Memory template is published, but legacy cleanup failed. "
-                    "Retry the request.",
+                    "Memory template is published, but legacy cleanup failed. Retry the request.",
                     details={
                         "published": True,
                         "legacy_cleanup_pending": True,
                         "retryable": True,
                     },
                 ) from exc
+        await _remove_obsolete_backup(client, backup_path, fs_ctx)
         logger.info("Updated account memory template: %s reset=%s", path, complete is None)
         return complete
     finally:
         await client.pathlock_release(lease, fs_ctx=fs_ctx_from_agfs_path(path))
+
+
+async def _remove_obsolete_backup(client: AsyncAGFSClient, backup_path: str, fs_ctx: dict) -> None:
+    try:
+        await client.rm(backup_path, fs_ctx=fs_ctx)
+    except AGFSNotFoundError:
+        pass
+    except Exception:
+        logger.warning("Failed to remove obsolete memory template backup: %s", backup_path)
 
 
 async def resolve_account_memory_registry(

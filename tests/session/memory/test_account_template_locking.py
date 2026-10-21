@@ -370,13 +370,12 @@ def test_publication_failures_never_overwrite_the_active_file(monkeypatch, exist
             ] == "After"
         assert not agfs.leases
         assert all(not held.locked() for held in agfs.locks.values())
-        if existing:
-            assert agfs.files[path + ".backup"] == old
+        assert path + ".backup" not in agfs.files
 
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("failure", [None, "backup", "remove"])
+@pytest.mark.parametrize("failure", [None, "remove"])
 def test_saving_defaults_uses_locked_reset_and_preserves_failed_writes(monkeypatch, failure):
     agfs = LockingAGFS()
     fs = SimpleNamespace(agfs=agfs)
@@ -389,41 +388,34 @@ def test_saving_defaults_uses_locked_reset_and_preserves_failed_writes(monkeypat
             fs, "locking-test", "profile", {"description": "Custom"}, registry
         )
         previous = agfs.files[path]
-        write, remove = agfs.write, agfs.rm
-
-        def checked_write(target, data, **kwargs):
-            assert target == path + ".backup", "saving defaults must not publish another file"
-            assert path in agfs.leases
-            if failure == "backup":
-                raise OSError("backup failed")
-            return write(target, data, **kwargs)
+        backup_path = path + ".backup"
+        agfs.files[backup_path] = b"obsolete"
+        remove = agfs.rm
 
         def checked_remove(target, **kwargs):
             if target == legacy_path:
                 return remove(target, **kwargs)
+            if target == backup_path:
+                assert path not in agfs.files
+                return remove(target, **kwargs)
             assert target == path
-            assert agfs.files[path + ".backup"] == previous
             if failure == "remove":
                 raise OSError("remove failed")
             return remove(target, **kwargs)
 
-        monkeypatch.setattr(agfs, "write", checked_write)
         monkeypatch.setattr(agfs, "rm", checked_remove)
         update = update_account_memory_template(
             fs, "locking-test", "profile", default_memory_template(registry, "profile"), registry
         )
-        if failure == "backup":
-            with pytest.raises(OSError, match=f"{failure} failed"):
-                await update
-            assert agfs.files[path] == previous
-        elif failure == "remove":
+        if failure == "remove":
             with pytest.raises(FailedPreconditionError, match="current memory template"):
                 await update
             assert agfs.files[path] == previous
+            assert agfs.files[backup_path] == b"obsolete"
         else:
             assert await update is None
             assert path not in agfs.files
-            assert agfs.files[path + ".backup"] == previous
+            assert backup_path not in agfs.files
         assert not agfs.leases
         assert all(not lock.locked() for lock in agfs.locks.values())
         assert not any(name.endswith(".tmp") for name in agfs.files)

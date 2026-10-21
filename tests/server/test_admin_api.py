@@ -608,7 +608,7 @@ async def test_account_memory_templates_publish_and_reset(
     )
     assert replacement.status_code == 200, replacement.text
     assert replacement.json()["result"]["effective"]["fields"] == result["defaults"]["fields"]
-    assert yaml.safe_load(fs.agfs._files[path + ".backup"])["description"] == body["description"]
+    assert path + ".backup" not in fs.agfs._files
     # An earlier extraction retains its complete snapshot across publication.
     assert resolved.get(memory_type).description == body["description"]
     reset = await client.delete(f"{root}/{memory_type}", headers=headers)
@@ -627,6 +627,31 @@ async def test_account_memory_templates_publish_and_reset(
     assert default_form.json()["result"]["status"] == "system_default"
     assert default_form.json()["result"]["updated_at"] is None
     assert path not in fs.agfs._files
+
+
+async def test_account_memory_template_yaml_uses_literal_multiline_strings(
+    lightweight_admin_client,
+    lightweight_admin_app,
+    template_account,
+):
+    account_id, headers = template_account
+    path = account_memory_template_path(account_id, "profile")
+    backup_path = path + ".backup"
+    fs = lightweight_admin_app.state.fake_service.viking_fs
+    fs.agfs._files[backup_path] = b"obsolete"
+    description = "# Role and objective\nReadable custom instructions."
+
+    response = await lightweight_admin_client.put(
+        f"/api/v1/admin/accounts/{account_id}/memory-templates/profile",
+        json={"description": description},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    raw = fs.agfs._files[path].decode("utf-8")
+    assert "description: |" in raw
+    assert yaml.safe_load(raw)["description"] == description
+    assert backup_path not in fs.agfs._files
 
 
 @pytest.mark.parametrize(
@@ -766,7 +791,6 @@ async def test_account_memory_templates_module_reset_clears_override(
     assert result["status"] == "custom"
     fs = lightweight_admin_app.state.fake_service.viking_fs
     path = account_memory_template_path(account_id, memory_type)
-    previous = fs.agfs._files[path]
     snapshot = await resolve_account_memory_registry(fs, account_id, get_default_registry())
     previous_schema = snapshot.get(memory_type).model_dump()
     untouched = {key: value for key, value in fs.agfs._files.items() if key != path}
@@ -787,7 +811,7 @@ async def test_account_memory_templates_module_reset_clears_override(
     assert restored.status_code == 200, restored.text
     assert restored.json()["result"] == initial
     assert path not in fs.agfs._files
-    assert fs.agfs._files[path + ".backup"] == previous
+    assert path + ".backup" not in fs.agfs._files
     assert all(fs.agfs._files[key] == value for key, value in untouched.items())
     assert (await client.get(url, headers=headers)).json()["result"] == initial
     listed = (await client.get(root, headers=headers)).json()["result"]["templates"]
@@ -1338,7 +1362,7 @@ async def test_account_memory_templates_old_content_can_be_read_replaced_and_res
             ),
         )
         assert response.status_code == 200, response.text
-        assert fs.agfs._files[path + ".backup"] == raw
+        assert path + ".backup" not in fs.agfs._files
 
 
 @pytest.mark.parametrize(
@@ -1828,14 +1852,14 @@ async def test_account_memory_templates_read_rejects_corrupt_storage_but_writes_
     )
     assert response.status_code == 200, response.text
     assert response.json()["result"]["effective"]["description"] == "Recovered"
-    assert fs.agfs._files[path + ".backup"] == corrupt
+    assert path + ".backup" not in fs.agfs._files
 
     fs.agfs._files[path] = corrupt
     response = await lightweight_admin_client.delete(url, headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["result"]["status"] == "system_default"
     assert path not in fs.agfs._files
-    assert fs.agfs._files[path + ".backup"] == corrupt
+    assert path + ".backup" not in fs.agfs._files
 
 
 async def test_account_memory_templates_read_legacy_without_side_effect_then_migrate_on_put(
@@ -1861,14 +1885,12 @@ async def test_account_memory_templates_read_legacy_without_side_effect_then_mig
     assert path not in fs.agfs._files
     assert fs.agfs._files[legacy_path] == original
 
-    migrated = await client.put(
-        url, headers=headers, json=read.json()["result"]["effective"]
-    )
+    migrated = await client.put(url, headers=headers, json=read.json()["result"]["effective"])
     assert migrated.status_code == 200, migrated.text
     assert migrated.json()["result"]["effective"]["description"] == "Legacy"
     assert path in fs.agfs._files
     assert legacy_path not in fs.agfs._files
-    assert fs.agfs._files[path + ".backup"] == original
+    assert path + ".backup" not in fs.agfs._files
 
 
 async def test_account_memory_templates_invalid_new_path_does_not_fallback_to_legacy(
@@ -1981,10 +2003,10 @@ async def test_account_memory_templates_reset_removes_legacy_before_current(
     response = await client.delete(url, headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["result"]["status"] == "system_default"
-    assert removed[-2:] == [legacy_path, path]
+    assert removed[-3:] == [legacy_path, path, path + ".backup"]
     assert path not in fs.agfs._files
     assert legacy_path not in fs.agfs._files
-    assert fs.agfs._files[path + ".backup"] == current
+    assert path + ".backup" not in fs.agfs._files
 
 
 async def test_create_account(

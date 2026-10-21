@@ -318,7 +318,8 @@ viking://system/memory/memory_templates/custom/
 
 Only published overrides create files. Each file contains the complete schema
 and an internal `_updated_at` timestamp; no `memory_templates.json` is used.
-The previous content is backed up to `{type}.yaml.backup`. Access goes through
+Updates and resets do not create visible backups and remove legacy
+`{type}.yaml.backup` files. Access goes through
 AGFS, preserving the deployment's encryption/storage configuration. Do not edit
 encrypted backing files directly. `setting.json` and User `user_config.json`
 are unchanged. Personal deployments use the default Account; enterprise
@@ -338,11 +339,11 @@ complete old or new version, or deployment defaults before the first publication
 and after DELETE. This is per-file publication, not a transaction across an
 entire template listing or registry snapshot.
 Writers/DELETE still use cross-process locks; publication locks cover the new,
-legacy, and staging paths. PUT publishes only to the new path and removes the
-legacy file after publication succeeds. DELETE removes the legacy file before
-the new file so that an old override cannot become active again. Explicit
-PUT/DELETE requests may replace or remove damaged content after backing up its
-original bytes. Contention uses zero-wait attempts with asynchronous
+legacy, obsolete backup, and staging paths. PUT publishes only to the new path
+and removes the legacy file after publication succeeds. DELETE removes the
+legacy file before the new file so that an old override cannot become active
+again. Explicit PUT/DELETE requests may replace or remove damaged content. Contention uses
+zero-wait attempts with asynchronous
 backoff for up to 10 seconds, leaving executor threads available for I/O/release.
 A failed staging write leaves the active file unchanged. Post-publication staging
 cleanup errors only produce warnings, never an in-place rollback. If the move reports an
