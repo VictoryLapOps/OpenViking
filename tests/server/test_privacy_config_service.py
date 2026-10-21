@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
 from openviking.core.namespace import canonical_user_root
+from openviking.privacy.reference import build_privacy_field_reference
 from openviking.privacy.service import UserPrivacyConfigService
 from openviking.privacy.skill_extractor import extract_skill_privacy_values
 from openviking.privacy.skill_placeholder import placeholderize_skill_content_with_blocks
@@ -278,6 +280,34 @@ async def test_skill_read_restores_placeholder_for_agent_segment_name(service):
 
     assert "secret-abc" in restored
     assert "https://example.com" in restored
+
+
+@pytest.mark.asyncio
+async def test_skill_default_read_preserves_references_and_raw_restores_credentials(
+    client, service, monkeypatch
+):
+    ctx = RequestContext(user=UserIdentifier.the_default_user(), role=Role.ROOT)
+    await service.initialize_user_directories(ctx)
+    await service.privacy_configs.upsert(ctx, "skill", "read-boundary", {"token": "pin"})
+    await service.privacy_configs.upsert(ctx, "credential", "managed", {"key": 'quote"secret'})
+    reference = build_privacy_field_reference(ctx.user.user_id, "credential", "managed", "key")
+    local = build_privacy_field_reference(ctx.user.user_id, "skill", "read-boundary", "token")
+    content = (
+        f"token={{{{ov_privacy:skill:read-boundary:token}}}}\nlocal={local}\nmanaged={reference}\n"
+    )
+    root = f"{canonical_user_root(ctx)}/skills/read-boundary"
+    await service.viking_fs.mkdir(root, exist_ok=True, ctx=ctx)
+    uri = root + "/SKILL.md"
+    await service.viking_fs.write_file(uri, content, ctx=ctx)
+    visible = await client.get("/api/v1/content/read", params={"uri": uri})
+    assert visible.status_code == 200, visible.text
+    assert visible.json()["result"] == content
+    read = AsyncMock(wraps=service.privacy_configs.get_current)
+    monkeypatch.setattr(service.privacy_configs, "get_current", read)
+    raw = await client.get("/api/v1/content/read", params={"uri": uri, "raw": True})
+    assert raw.status_code == 200, raw.text
+    assert raw.json()["result"] == 'token=pin\nlocal=pin\nmanaged=quote"secret\n'
+    assert read.await_count == 2
 
 
 @pytest.mark.asyncio

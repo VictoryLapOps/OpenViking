@@ -88,13 +88,14 @@ add_skill
 
 ### Restore on Read (Load Path)
 
-When reading `SKILL.md`, `FSService.read` attempts placeholder restoration automatically.
+Reads of `SKILL.md` preserve placeholders by default. With explicit `raw=true`, `FSService.read` attempts to restore them.
 
 ```
 fs.read(uri)
   -> get_skill_name_from_uri(uri)
-  -> privacy.get_current(category="skill", target_key=skill_name)
-  -> restore_skill_content(content, skill_name, current.values)
+  -> restore_skill_content
+    -> privacy.get_current(category, target_key)
+    -> restore references in the content
 ```
 
 #### URI Matching
@@ -122,7 +123,9 @@ Current matching is suffix-based: `/skills/{name}/SKILL.md`, so it supports user
    - `Missing config: ...` (if any)
    - `Configured but not referenced in content: ...` (if any)
 
-> Current implementation only runs restore when a `current` privacy config exists for that skill. If no current config exists, no notice is appended.
+Placeholders that reference the current user's Privacy fields are also restored. References to other users or missing fields remain unchanged.
+
+> Config notices for a skill are appended only when that skill has a `current` config.
 
 ---
 
@@ -157,12 +160,12 @@ Session.add_messages_async
 
 ### Restore on Read (Load Path)
 
-When reading Session messages or externalized tool output, `FSService.read` attempts placeholder restoration automatically.
+Reads of Session messages or externalized tool output preserve placeholders by default. With explicit `raw=true`, `FSService.read` attempts to restore them.
 
 ```
 fs.read(uri)
   -> get_session_id_from_uri(uri, session_root)
-  -> restore_session_read
+  -> restore_session_content
     -> privacy.get_current(category, target_key)
     -> restore references in the content
 ```
@@ -177,7 +180,7 @@ Restoration is supported for these files under the current user's Session direct
 
 #### restore Rules
 
-`restore_session_read` behavior:
+`restore_session_content` behavior:
 
 1. **Placeholder exists in content and privacy value exists**
 

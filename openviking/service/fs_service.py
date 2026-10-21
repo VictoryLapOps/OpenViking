@@ -22,7 +22,7 @@ from openviking.core.namespace import (
 )
 from openviking.privacy.sanitizer import PrivacySanitizer
 from openviking.privacy.service import UserPrivacyConfigService
-from openviking.privacy.session_restore import get_session_id_from_uri, restore_session_read
+from openviking.privacy.session_restore import get_session_id_from_uri, restore_session_content
 from openviking.privacy.skill_restore import get_skill_name_from_uri, restore_skill_content
 from openviking.resource.uri_mutation_coordinator import UriMutationCoordinator
 from openviking.resource.watch_storage import is_watch_task_control_uri
@@ -1081,12 +1081,9 @@ class FSService:
         viking_fs = self._ensure_initialized()
         await viking_fs._ensure_access(uri, ctx, action=AclAction.WRITE)
 
-    async def read(self, uri: str, ctx: RequestContext, offset: int = 0, limit: int = -1) -> str:
-        """Read file content. Accepts a Viking URI or a 32-char hex vector record id."""
+    async def _read_content(self, uri: str, ctx: RequestContext) -> tuple[str, str]:
+        """Resolve the URI and read stored content without Privacy restoration."""
         viking_fs = self._ensure_initialized()
-        # Resolve ids to URIs so that downstream helpers (get_skill_name_from_uri)
-        # always see a real viking:// URI. VikingFS.read_file also resolves, which
-        # is harmless defense-in-depth when the input was already a URI.
         resolved_uri = await self._resolve_uri(uri, ctx)
         try:
             content = await viking_fs.read_file(resolved_uri, ctx=ctx)
@@ -1096,19 +1093,23 @@ class FSService:
             legacy_uri = validate_safe_viking_uri_path(resolved_uri.replace("%20", " "))
             content = await viking_fs.read_file(legacy_uri, ctx=ctx)
             resolved_uri = legacy_uri
+        return resolved_uri, content
+
+    async def read(self, uri: str, ctx: RequestContext, offset: int = 0, limit: int = -1) -> str:
+        """Read file content, restoring Privacy references for Skills and Sessions."""
+        resolved_uri, content = await self._read_content(uri, ctx)
         if self._privacy_config_service is not None:
             skill_name = get_skill_name_from_uri(resolved_uri)
             session_id = get_session_id_from_uri(resolved_uri, canonical_session_root(ctx))
             if skill_name is not None:
-                current = await self._privacy_config_service.get_current(
-                    ctx=ctx,
-                    category="skill",
-                    target_key=skill_name,
+                content = await restore_skill_content(
+                    self._privacy_config_service,
+                    content,
+                    ctx,
+                    skill_name=skill_name,
                 )
-                if current:
-                    content = restore_skill_content(content, skill_name, current.values)
             elif session_id is not None:
-                content = await restore_session_read(
+                content = await restore_session_content(
                     self._privacy_config_service,
                     content,
                     ctx,
@@ -1152,7 +1153,7 @@ class FSService:
                         "max_bytes": self._privacy_sanitizer.max_content_bytes,
                     },
                 )
-        content = await self.read(resolved_uri, ctx=ctx)
+        resolved_uri, content = await self._read_content(resolved_uri, ctx)
         if classify_uri(resolved_uri).is_memory:
             content = visible_content(content, uri=resolved_uri)
         if self._privacy_sanitizer is not None:

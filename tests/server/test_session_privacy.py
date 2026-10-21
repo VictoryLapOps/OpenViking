@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Protect Session persistence and restore before visible-read sanitization."""
+"""Protect Session persistence and restore only on explicit raw reads."""
 
 import asyncio
 import json
@@ -17,7 +17,7 @@ from openviking.privacy.session_extractor import (
     extract_and_store_session_privacy,
     session_privacy_target,
 )
-from openviking.privacy.session_restore import restore_session_read
+from openviking.privacy.session_restore import restore_session_content
 from openviking.server.config import ToolOutputExternalizationConfig
 from openviking.server.identity import RequestContext, Role
 from openviking_cli.exceptions import InvalidArgumentError, ResourceExhaustedError
@@ -29,7 +29,7 @@ def ctx():
     return RequestContext(user=UserIdentifier.the_default_user(), role=Role.ROOT)
 
 
-async def test_http_restores_before_visible_read_sanitization(client, service, ctx):
+async def test_http_preserves_protected_content_and_restores_only_raw_reads(client, service, ctx):
     sid = "http-privacy"
     response = await client.post("/api/v1/sessions", json={"session_id": sid})
     assert response.status_code == 200, response.text
@@ -77,6 +77,28 @@ async def test_http_restores_before_visible_read_sanitization(client, service, c
     assert list(current.values.values()) == ["http-secret"]
     assert (await client.delete(f"/api/v1/sessions/{sid}")).status_code == 200
     assert (await client.get(f"/api/v1/privacy-configs/session/{sid}")).status_code == 200
+
+
+async def test_default_read_keeps_escaped_short_and_container_values_protected(
+    client, service, ctx
+):
+    original = {
+        "password": 'quote"secret',
+        "token": "line\nsecret",
+        "api_key": "back\\secret",
+        "secret": "pin",
+        "credentials": {"api_key": "container-secret", "items": [False, None, 7]},
+    }
+    session = await service.sessions.create(ctx, "protected-read")
+    await session.add_message_async("assistant", [ToolPart(tool_input=original)])
+    uri = session.uri + "/messages.jsonl"
+    disk = await service.viking_fs.read_file(uri, ctx=ctx)
+    visible = await client.get("/api/v1/content/read", params={"uri": uri})
+    assert visible.status_code == 200, visible.text
+    assert visible.json()["result"] == disk
+    raw = await client.get("/api/v1/content/read", params={"uri": uri, "raw": True})
+    assert raw.status_code == 200, raw.text
+    assert json.loads(raw.json()["result"])["parts"][0]["tool_input"] == original
 
 
 async def test_new_equal_fields_keep_independent_references_when_one_rotates(service, ctx):
@@ -237,7 +259,7 @@ async def test_batch_discovery_protects_all_payloads_without_mutating_inputs(ser
     assert parts[3].tool_output == reference
     assert parts[3].tool_output_externalization_error == reference
     encoded = json.dumps({**protected[0], "parts": [asdict(part) for part in parts]})
-    restored = await restore_session_read(
+    restored = await restore_session_content(
         service.privacy_configs,
         encoded,
         ctx,
@@ -305,6 +327,7 @@ async def test_auto_created_session_extracts_before_persistence(service, ctx):
     current = await service.privacy_configs.get_current(ctx, "session", session.session_id)
     assert list(current.values.values()) == ["default-secret"]
     assert "default-secret" in await service.fs.read(uri, ctx=ctx)
+
 
 @pytest.mark.parametrize(
     "sid",
@@ -481,7 +504,7 @@ async def test_later_credential_registration_preserves_session_reference_identit
 
     visible = await client.get("/api/v1/content/read", params={"uri": first_uri})
     assert visible.status_code == 200, visible.text
-    assert json.loads(visible.json()["result"])["parts"][0]["text"] == f"password={credential}"
+    assert visible.json()["result"] == stored
 
     await service.privacy_configs.patch_values(ctx, "credential", "managed", {"key": "rotated-key"})
     for session, expected in [(first, value), (second, "rotated-key")]:

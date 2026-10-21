@@ -15,7 +15,7 @@ from openviking.message.part import ContextPart, ImagePart, TextPart, ToolPart
 from openviking.privacy import session_extractor as extraction
 from openviking.privacy.reference import build_privacy_field_reference
 from openviking.privacy.session_extractor import extract_session_privacy_values
-from openviking.privacy.session_restore import get_session_id_from_uri, restore_session_read
+from openviking.privacy.session_restore import get_session_id_from_uri, restore_session_content
 from openviking_cli.exceptions import InvalidArgumentError, ResourceExhaustedError
 
 
@@ -88,7 +88,7 @@ async def test_extract_and_restore_complete_messages(privacy, request_context):
     for secret in ["中文密码", "abstract-secret", "another-secret", "hello world", "error-secret"]:
         assert secret not in clean
     privacy.get_current.return_value = SimpleNamespace(values=values)
-    assert await restore_session_read(
+    assert await restore_session_content(
         privacy, clean, request_context, session_id="demo", jsonl=True
     ) == message_jsonl(before)
     specs[1]["parts"][0].tool_input["credentials"]["nested"].append("changed")
@@ -104,7 +104,7 @@ async def test_batch_field_id_collision_preserves_both_values(
     protected, values = extract_session_privacy_values("demo", specs)
     assert sorted(values.values()) == ["first", "second"]
     privacy.get_current.return_value = SimpleNamespace(values=values)
-    assert await restore_session_read(
+    assert await restore_session_content(
         privacy, message_jsonl(protected), request_context, session_id="demo", jsonl=True
     ) == message_jsonl(specs)
 
@@ -124,7 +124,7 @@ async def test_sensitive_field_names_do_not_leak_into_references(privacy, reques
     sanitized, values = extract_session_privacy_values("demo", specs)
     assert key not in message_jsonl(sanitized)
     privacy.get_current.return_value = SimpleNamespace(values=values)
-    assert await restore_session_read(
+    assert await restore_session_content(
         privacy, message_jsonl(sanitized), request_context, session_id="demo", jsonl=True
     ) == message_jsonl(specs)
 
@@ -194,6 +194,6 @@ async def test_invalid_message_jsonl_is_rejected(privacy, request_context):
     reference = build_privacy_field_reference("default", "session", "demo", "one")
     privacy.get_current.return_value = SimpleNamespace(values={"one": "secret"})
     with pytest.raises(InvalidArgumentError):
-        await restore_session_read(
+        await restore_session_content(
             privacy, f"not json {reference}", request_context, session_id="demo", jsonl=True
         )

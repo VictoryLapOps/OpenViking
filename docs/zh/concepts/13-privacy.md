@@ -88,13 +88,14 @@ add_skill
 
 ### 加载还原（读取链路）
 
-读取 `SKILL.md` 时，`FSService.read` 会尝试自动还原占位符。
+读取 `SKILL.md` 时，默认保留占位符；显式指定 `raw=true` 时，`FSService.read` 会尝试还原占位符。
 
 ```
 fs.read(uri)
   -> get_skill_name_from_uri(uri)
-  -> privacy.get_current(category="skill", target_key=skill_name)
-  -> restore_skill_content(content, skill_name, current.values)
+  -> restore_skill_content
+    -> privacy.get_current(category, target_key)
+    -> 还原正文中的引用
 ```
 
 #### URI 匹配
@@ -122,7 +123,9 @@ fs.read(uri)
    - `Missing config: ...`（如有）
    - `Configured but not referenced in content: ...`（如有）
 
-> 仅当该 skill 已有 `current` 配置时才会进入 restore。若没有当前配置，不会追加 notice。
+指向当前用户 Privacy 字段的占位符也会按其引用还原；指向其他用户或缺失字段时，保留占位符。
+
+> 仅当该 skill 已有 `current` 配置时，才会追加该技能的配置提示。
 
 ---
 
@@ -157,12 +160,12 @@ Session.add_messages_async
 
 ### 加载还原（读取链路）
 
-读取 Session 消息或外置工具输出时，`FSService.read` 会尝试自动还原占位符。
+读取 Session 消息或外置工具输出时，默认保留占位符；显式指定 `raw=true` 时，`FSService.read` 会尝试还原占位符。
 
 ```
 fs.read(uri)
   -> get_session_id_from_uri(uri, session_root)
-  -> restore_session_read
+  -> restore_session_content
     -> privacy.get_current(category, target_key)
     -> 还原正文中的引用
 ```
@@ -177,7 +180,7 @@ fs.read(uri)
 
 #### restore 规则
 
-`restore_session_read` 的行为如下：
+`restore_session_content` 的行为如下：
 
 1. **content 中有占位符，且 privacy value 存在**
 
