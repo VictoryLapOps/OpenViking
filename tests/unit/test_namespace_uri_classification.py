@@ -98,6 +98,19 @@ def test_exact_memory_and_skill_root_detection():
     assert not classify_uri("viking://user/skills/demo").is_skill_root
     assert classify_uri("viking://agent/skills").is_skill_namespace
     assert classify_uri("viking://agent/skills/demo").is_skill_root
+    assert classify_uri(
+        "viking://system/compile/example-skills"
+    ).is_skill_namespace
+    assert classify_uri(
+        "viking://system/compile/example-skills/llm-wiki"
+    ).is_skill_root
+    assert classify_uri(
+        "viking://system/compile/example-skills/llm-wiki/SKILL.md"
+    ).is_skill
+    assert not classify_uri("viking://system/compile").is_skill
+    assert not classify_uri(
+        "viking://system/compile/example-skills/llm-wiki/references"
+    ).is_skill_root
     assert not classify_uri("viking://user/alice/skills").is_skill_root
     assert not classify_uri("viking://user/alice/skills/demo/assets").is_skill_root
 
