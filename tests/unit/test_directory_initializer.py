@@ -145,6 +145,9 @@ async def test_system_assets_sync_only_for_account_initialization():
     )
     ctx = RequestContext(user=UserIdentifier("acme", "alice"), role=Role.ADMIN)
 
+    await initializer.initialize_account_workspace(ctx, sync_system_assets=False)
+    synchronizer.sync.assert_not_awaited()
+
     await initializer.initialize_account_workspace(ctx)
     await initializer.initialize_account_directories(ctx)
     await initializer.initialize_user_directories(ctx)

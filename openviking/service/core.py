@@ -528,7 +528,8 @@ class OpenVikingService:
         self._directory_initializer = directory_initializer
         default_ctx = RequestContext(user=self._user, role=Role.ROOT)
         account_count, user_count = await directory_initializer.initialize_account_workspace(
-            default_ctx
+            default_ctx,
+            sync_system_assets=False,
         )
         logger.info(
             "Initialized preset directories account=%d user=%d",
@@ -690,6 +691,7 @@ class OpenVikingService:
         if self._queue_manager:
             self._queue_manager.start()
             logger.info("QueueManager workers started")
+        await system_asset_synchronizer.sync(default_ctx)
 
         if session_expiry_enabled:
             from openviking.scheduling.expiry.runtime import ExpiryRuntime, ExpiryRuntimeRoles

@@ -209,9 +209,14 @@ class DirectoryInitializer:
 
         return get_viking_fs()
 
-    async def initialize_account_workspace(self, ctx: RequestContext) -> tuple[int, int]:
+    async def initialize_account_workspace(
+        self,
+        ctx: RequestContext,
+        *,
+        sync_system_assets: bool = True,
+    ) -> tuple[int, int]:
         """Initialize account and first-user preset directories as one batch."""
-        if self._system_asset_synchronizer is not None:
+        if sync_system_assets and self._system_asset_synchronizer is not None:
             await self._system_asset_synchronizer.sync(ctx)
         account_roots, account_children = self._account_directory_targets(ctx)
         user_root, user_children = self._user_directory_targets(ctx)
