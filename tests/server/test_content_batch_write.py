@@ -217,6 +217,29 @@ async def test_system_builtin_batch_write_accepts_binary_assets(
 
 
 @pytest.mark.asyncio
+async def test_user_skill_namespace_batch_write_remains_rejected():
+    root = "viking://user/default/skills"
+    coordinator = ContentWriteCoordinator(_VFS(root))
+    ctx = RequestContext(user=UserIdentifier.the_default_user(), role=Role.USER)
+
+    with pytest.raises(
+        InvalidArgumentError,
+        match="batch-write root must be a resource or memory directory",
+    ):
+        await coordinator.batch_write(
+            root_uri=root,
+            operations=[
+                {
+                    "uri": f"{root}/demo/SKILL.md",
+                    "content": "skill",
+                    "mode": "replace",
+                }
+            ],
+            ctx=ctx,
+        )
+
+
+@pytest.mark.asyncio
 async def test_system_write_rejects_indexed_metadata():
     root = "viking://system/memory/memory_templates/custom/demo"
     uri = f"{root}/template.md"

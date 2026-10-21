@@ -31,7 +31,7 @@ from openviking.resource.processing_mode import (
     normalize_processing_mode,
 )
 from openviking.resource.watch_storage import is_watch_task_control_uri
-from openviking.server.identity import RequestContext
+from openviking.server.identity import RequestContext, Role
 from openviking.service.task_tracker import get_task_tracker, run_tracked_operation
 from openviking.service.task_tracker_concurrency import run_to_completion
 from openviking.service.task_work_index import get_enqueued_work_ids, get_task_context
@@ -804,7 +804,15 @@ class ContentWriteCoordinator:
     async def _validate_batch_root(self, root_uri: str, *, ctx: RequestContext) -> None:
         classification = classify_uri(root_uri)
         parts = uri_parts(root_uri)
-        if classification.context_type not in {"resource", "memory"}:
+        is_root_system_skill_namespace = (
+            ctx.role == Role.ROOT
+            and classification.scope == "system"
+            and classification.is_skill_namespace
+        )
+        if (
+            classification.context_type not in {"resource", "memory"}
+            and not is_root_system_skill_namespace
+        ):
             raise InvalidArgumentError("batch-write root must be a resource or memory directory")
         if classification.context_type == "memory":
             if (
@@ -814,9 +822,12 @@ class ContentWriteCoordinator:
                 raise InvalidArgumentError(
                     "batch-write root must be inside a memory type directory"
                 )
-        elif parts == ["resources"] or (
-            classification.content_index is not None
-            and len(parts) <= classification.content_index + 1
+        elif classification.context_type == "resource" and (
+            parts == ["resources"]
+            or (
+                classification.content_index is not None
+                and len(parts) <= classification.content_index + 1
+            )
         ):
             raise InvalidArgumentError("batch-write root must be inside a resource directory")
         await self._viking_fs._ensure_access(root_uri, ctx, action=AclAction.WRITE)
