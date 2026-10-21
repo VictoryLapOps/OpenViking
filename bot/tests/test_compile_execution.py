@@ -8,13 +8,44 @@ from unittest.mock import AsyncMock
 
 import pytest
 from vikingbot.compile import review
-from vikingbot.compile.models import CompileLimits
+from vikingbot.compile.models import CompileFailure, CompileLimits
 from vikingbot.compile.pipeline_io import JsonModel, ModelCallLimitError
 from vikingbot.compile.plan import Contract, Node, ReviewDecision
 from vikingbot.compile.sandbox import CompileSandboxManager, _CompileSandbox
 from vikingbot.compile.service import BotCompileService
 from vikingbot.config.schema import Config, SessionKey
 from vikingbot.providers.base import LLMResponse, ToolCallRequest
+
+
+@pytest.mark.parametrize(
+    "skill_uri,expected",
+    [
+        ("viking://agent/skills/demo", ("demo", "viking://agent/skills")),
+        ("viking://user/alice/skills/demo", ("demo", "viking://user/alice/skills")),
+        (
+            "viking://system/compile/example-skills/llm-wiki",
+            ("llm-wiki", "viking://system/compile/example-skills"),
+        ),
+    ],
+)
+def test_skill_name_and_target_uses_namespace_classification(skill_uri, expected):
+    assert BotCompileService._skill_name_and_target(skill_uri) == expected
+
+
+@pytest.mark.parametrize(
+    "skill_uri,message",
+    [
+        ("viking://system/memory/memory_templates/builtin", "outside a skills namespace"),
+        ("viking://system/compile/example-skills", "must identify one Skill root"),
+        (
+            "viking://system/compile/example-skills/llm-wiki/references",
+            "must identify one Skill root",
+        ),
+    ],
+)
+def test_skill_name_and_target_rejects_non_skill_roots(skill_uri, message):
+    with pytest.raises(CompileFailure, match=message):
+        BotCompileService._skill_name_and_target(skill_uri)
 
 
 @pytest.mark.parametrize(
